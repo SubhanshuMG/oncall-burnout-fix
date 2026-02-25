@@ -1,0 +1,34 @@
+# docker-compose.yml
+# https://github.com/SubhanshuMG/oncall-burnout-fix
+# Local development stack: diagnosis engine + Redis + Prometheus
+
+version: "3.9"
+
+services:
+  diagnosis-engine:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - redis
+      - prometheus
+    volumes:
+      - ./playbooks:/app/playbooks
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./dev/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"

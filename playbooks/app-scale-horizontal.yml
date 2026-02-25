@@ -1,0 +1,48 @@
+---
+# playbooks/app-scale-horizontal.yml
+# RB-APP-002: Horizontal Pod Scaling
+# https://github.com/SubhanshuMG/oncall-burnout-fix
+
+- name: "RB-APP-002: Horizontal Pod Scaling"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    namespace: "production"
+    scale_factor: 2
+
+  tasks:
+    - name: Log runbook start
+      ansible.builtin.debug:
+        msg: "Starting RB-APP-002 for incident {{ incident_id }}, triggered by {{ triggered_by }}"
+
+    - name: Get current replica count
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ service | default('unknown') }}"
+        namespace: "{{ namespace }}"
+      register: deployment_info
+
+    - name: Set current replicas fact
+      ansible.builtin.set_fact:
+        current_replicas: "{{ deployment_info.resources[0].spec.replicas | int }}"
+
+    - name: Scale deployment up
+      kubernetes.core.k8s_scale:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ service | default('unknown') }}"
+        namespace: "{{ namespace }}"
+        replicas: "{{ (current_replicas | int * scale_factor) | int }}"
+        wait: true
+        wait_timeout: 120
+
+    - name: Log scale action
+      ansible.builtin.debug:
+        msg: >
+          Scaled {{ service }} from {{ current_replicas }} to
+          {{ (current_replicas | int * scale_factor) | int }} replicas.
+
+    - name: Report success
+      ansible.builtin.debug:
+        msg: "RB-APP-002 complete. Incident {{ incident_id }}."

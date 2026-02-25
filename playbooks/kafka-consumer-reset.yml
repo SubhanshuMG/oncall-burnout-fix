@@ -1,0 +1,53 @@
+---
+# playbooks/kafka-consumer-reset.yml
+# RB-KAFKA-001: Kafka Consumer Group Reset
+# https://github.com/SubhanshuMG/oncall-burnout-fix
+
+- name: "RB-KAFKA-001: Kafka Consumer Group Reset"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    namespace: "production"
+    kafka_bootstrap: "kafka.production.svc.cluster.local:9092"
+
+  tasks:
+    - name: Log runbook start
+      ansible.builtin.debug:
+        msg: "Starting RB-KAFKA-001 for incident {{ incident_id }}, triggered by {{ triggered_by }}"
+
+    - name: Scale down consumer deployment to 0
+      kubernetes.core.k8s_scale:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ service | default('notification-service') }}"
+        namespace: "{{ namespace }}"
+        replicas: 0
+        wait: true
+        wait_timeout: 60
+
+    - name: Reset consumer group offset to latest
+      ansible.builtin.command:
+        cmd: >
+          kafka-consumer-groups.sh
+          --bootstrap-server {{ kafka_bootstrap }}
+          --group {{ consumer_group | default('default-group') }}
+          --topic {{ topic | default('all') }}
+          --reset-offsets
+          --to-latest
+          --execute
+      register: reset_result
+      changed_when: reset_result.rc == 0
+
+    - name: Scale consumer back up
+      kubernetes.core.k8s_scale:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ service | default('notification-service') }}"
+        namespace: "{{ namespace }}"
+        replicas: "{{ original_replicas | default(2) }}"
+        wait: true
+        wait_timeout: 120
+
+    - name: Report success
+      ansible.builtin.debug:
+        msg: "RB-KAFKA-001 complete. Consumer group reset. Incident {{ incident_id }}."

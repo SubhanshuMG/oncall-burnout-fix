@@ -1,0 +1,40 @@
+---
+# playbooks/app-restart-graceful.yml
+# RB-APP-001: Graceful Application Restart
+# https://github.com/SubhanshuMG/oncall-burnout-fix
+
+- name: "RB-APP-001: Graceful Application Restart"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    namespace: "production"
+
+  tasks:
+    - name: Log runbook start
+      ansible.builtin.debug:
+        msg: "Starting RB-APP-001 for incident {{ incident_id }}, triggered by {{ triggered_by }}"
+
+    - name: Perform rolling restart
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ service | default('unknown') }}"
+            namespace: "{{ namespace }}"
+            annotations:
+              kubectl.kubernetes.io/restartedAt: "{{ ansible_date_time.iso8601 }}"
+              remediation/incident-id: "{{ incident_id }}"
+              remediation/triggered-by: "{{ triggered_by }}"
+              remediation/runbook: "{{ runbook_id }}"
+
+    - name: Wait for rollout to complete
+      kubernetes.core.k8s_rollout_status:
+        name: "{{ service | default('unknown') }}"
+        namespace: "{{ namespace }}"
+        timeout: 180
+
+    - name: Report success
+      ansible.builtin.debug:
+        msg: "RB-APP-001 complete. Service restarted. Incident {{ incident_id }}."

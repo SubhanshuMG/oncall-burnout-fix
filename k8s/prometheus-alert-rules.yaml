@@ -1,0 +1,90 @@
+# k8s/prometheus-alert-rules.yaml
+# https://github.com/SubhanshuMG/oncall-burnout-fix
+#
+# Key design principle: every alert carries semantic labels that describe
+# WHAT IT MEANS, not just what it measures. These labels power grouping
+# and inhibition in Alertmanager.
+#
+# Apply with: kubectl apply -f k8s/prometheus-alert-rules.yaml
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: application-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: prometheus
+spec:
+  groups:
+    - name: service.database
+      interval: 30s
+      rules:
+        # Root cause alert: DB connection exhaustion
+        # root_cause_candidate=true means this alert can cause downstream cascades
+        - alert: DatabaseConnectionPoolExhausted
+          expr: |
+            (
+              pg_stat_activity_count{state="active"}
+              / pg_settings_max_connections
+            ) > 0.85
+          for: 1m
+          labels:
+            severity: critical
+            layer: infrastructure
+            impact_type: resource
+            root_cause_candidate: "true"
+            service: "{{ $labels.service }}"
+            runbook: RB-DB-001
+          annotations:
+            summary: "DB connection pool at {{ $value | humanizePercentage }} capacity"
+            description: "Service {{ $labels.service }} is exhausting its connection pool"
+
+        # Symptom alert: upstream service errors caused by DB
+        - alert: ServiceErrorRateHigh
+          expr: |
+            (
+              rate(http_requests_total{status=~"5.."}[5m])
+              / rate(http_requests_total[5m])
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: warning
+            layer: application
+            impact_type: availability
+            root_cause_candidate: "false"
+            service: "{{ $labels.service }}"
+            runbook: RB-APP-001
+          annotations:
+            summary: "{{ $labels.service }} error rate {{ $value | humanizePercentage }}"
+
+        - alert: ServiceLatencyHigh
+          expr: |
+            histogram_quantile(0.99,
+              rate(http_request_duration_seconds_bucket[5m])
+            ) > 2
+          for: 2m
+          labels:
+            severity: warning
+            layer: application
+            impact_type: performance
+            root_cause_candidate: "false"
+            service: "{{ $labels.service }}"
+            runbook: RB-APP-002
+          annotations:
+            summary: "{{ $labels.service }} p99 latency {{ $value | humanizeDuration }}"
+
+    - name: service.kafka
+      interval: 30s
+      rules:
+        - alert: KafkaConsumerLagHigh
+          expr: kafka_consumer_group_lag_sum > 10000
+          for: 3m
+          labels:
+            severity: warning
+            layer: messaging
+            impact_type: throughput
+            root_cause_candidate: "false"
+            runbook: RB-KAFKA-001
+          annotations:
+            summary: "Consumer lag {{ $value }} messages on {{ $labels.topic }}"

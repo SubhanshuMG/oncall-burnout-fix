@@ -1,0 +1,114 @@
+---
+# playbooks/db-connection-pool-fix.yml
+# RB-DB-001: Database Connection Pool Exhaustion Fix
+# https://github.com/SubhanshuMG/oncall-burnout-fix
+#
+# Scales the DB_POOL_SIZE env var on the target service deployment
+# by 1.5x (capped at 50), waits for rollout, and verifies metric improvement.
+#
+# Variables expected:
+#   incident_id   - from diagnosis engine
+#   triggered_by  - Slack username who approved
+#   runbook_id    - RB-DB-001
+
+- name: "RB-DB-001: Database Connection Pool Exhaustion Fix"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    namespace: "production"
+    service: "order-service"
+    max_connections_multiplier: 1.5
+
+  tasks:
+    - name: Log runbook start
+      ansible.builtin.debug:
+        msg: >
+          Starting RB-DB-001 for incident {{ incident_id }}.
+          Triggered by {{ triggered_by }}.
+
+    - name: Get current deployment config
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ service }}"
+        namespace: "{{ namespace }}"
+      register: deployment_info
+
+    - name: Fail if deployment not found
+      ansible.builtin.fail:
+        msg: "Deployment {{ service }} not found in {{ namespace }}"
+      when: deployment_info.resources | length == 0
+
+    - name: Extract current DB pool size from env
+      ansible.builtin.set_fact:
+        current_pool_size: >-
+          {{
+            deployment_info.resources[0].spec.template.spec.containers[0].env
+            | selectattr('name', 'eq', 'DB_POOL_SIZE')
+            | map(attribute='value')
+            | first
+            | default('10')
+            | int
+          }}
+
+    - name: Compute new pool size (capped at 50)
+      ansible.builtin.set_fact:
+        new_pool_size: >-
+          {{ [
+            (current_pool_size | int * max_connections_multiplier) | int,
+            50
+          ] | min }}
+
+    - name: Log pool size change
+      ansible.builtin.debug:
+        msg: "Scaling DB pool: {{ current_pool_size }} -> {{ new_pool_size }}"
+
+    - name: Patch deployment with new pool size
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ service }}"
+            namespace: "{{ namespace }}"
+            annotations:
+              remediation/incident-id: "{{ incident_id }}"
+              remediation/triggered-by: "{{ triggered_by }}"
+              remediation/runbook: "{{ runbook_id }}"
+              remediation/timestamp: "{{ ansible_date_time.iso8601 }}"
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: "{{ service }}"
+                    env:
+                      - name: DB_POOL_SIZE
+                        value: "{{ new_pool_size | string }}"
+
+    - name: Wait for rollout to complete
+      kubernetes.core.k8s_rollout_status:
+        name: "{{ service }}"
+        namespace: "{{ namespace }}"
+        timeout: 120
+
+    - name: Verify connection pool metric improved
+      ansible.builtin.uri:
+        url: >-
+          http://prometheus-operated.monitoring.svc.cluster.local:9090/api/v1/query
+          ?query=pg_stat_activity_count{service="{{ service }}",state="active"}
+        method: GET
+        return_content: true
+      register: metric_check
+      retries: 6
+      delay: 10
+      until: >-
+        (metric_check.json.data.result[0].value[1] | float)
+        < (new_pool_size | int * 0.7)
+
+    - name: Report success
+      ansible.builtin.debug:
+        msg: >
+          RB-DB-001 complete. Connection pool scaled from
+          {{ current_pool_size }} to {{ new_pool_size }}.
+          Incident {{ incident_id }} resolved.

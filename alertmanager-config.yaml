@@ -1,0 +1,101 @@
+# alertmanager-config.yaml
+# https://github.com/SubhanshuMG/oncall-burnout-fix
+#
+# The most important config file in the whole architecture.
+# Every decision here directly translates to fewer 3AM pages.
+#
+# Apply with: kubectl apply -f alertmanager-config.yaml
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alertmanager-prometheus-kube-prometheus-alertmanager
+  namespace: monitoring
+type: Opaque
+stringData:
+  alertmanager.yaml: |
+    global:
+      resolve_timeout: 5m
+      slack_api_url: 'YOUR_SLACK_WEBHOOK_URL'
+
+    # Inhibition rules: when a root cause alert fires,
+    # suppress all downstream symptom alerts.
+    # This is the single biggest reducer of raw alert volume.
+    inhibit_rules:
+      # DB exhaustion inhibits all downstream service alerts in same namespace
+      - source_matchers:
+          - 'alertname="DatabaseConnectionPoolExhausted"'
+          - 'root_cause_candidate="true"'
+        target_matchers:
+          - 'root_cause_candidate="false"'
+          - 'layer="application"'
+        equal: ['namespace']
+
+      # Infrastructure critical inhibits application warnings
+      - source_matchers:
+          - 'layer="infrastructure"'
+          - 'severity="critical"'
+        target_matchers:
+          - 'layer="application"'
+          - 'severity="warning"'
+        equal: ['namespace']
+
+      # Critical suppresses warning of same type on same service
+      - source_matchers:
+          - 'severity="critical"'
+        target_matchers:
+          - 'severity="warning"'
+        equal: ['alertname', 'service', 'namespace']
+
+    route:
+      # Default grouping: bundle by namespace + layer + impact_type
+      group_by: ['namespace', 'layer', 'impact_type']
+      group_wait: 30s        # Collect related alerts for 30s before sending
+      group_interval: 5m     # Minimum time between re-notifications per group
+      repeat_interval: 4h    # Re-notify if still firing after 4h
+
+      receiver: 'diagnosis-engine'
+
+      routes:
+        # Critical infrastructure: fast path (10s wait, not 30s)
+        - matchers:
+            - 'severity="critical"'
+            - 'layer="infrastructure"'
+          group_wait: 10s
+          group_interval: 2m
+          receiver: 'diagnosis-engine'
+          continue: false
+
+        # Application errors: group by service for better context
+        - matchers:
+            - 'layer="application"'
+          group_by: ['namespace', 'service', 'impact_type']
+          group_wait: 45s
+          receiver: 'diagnosis-engine'
+          continue: false
+
+        # Ongoing warnings: human-visible Slack channel
+        - matchers:
+            - 'severity="warning"'
+          repeat_interval: 1h
+          receiver: 'slack-warnings'
+          continue: false
+
+    receivers:
+      # Primary: POST grouped alert bundle to diagnosis engine
+      - name: 'diagnosis-engine'
+        webhook_configs:
+          - url: 'http://diagnosis-engine.monitoring.svc.cluster.local:8080/alerts'
+            send_resolved: true
+            http_config:
+              bearer_token: 'YOUR_INTERNAL_TOKEN'
+
+      # Secondary: Slack for human-visible warning stream
+      - name: 'slack-warnings'
+        slack_configs:
+          - channel: '#oncall-warnings'
+            title: 'Warning: {{ .GroupLabels.alertname }}'
+            text: |
+              *Alerts:* {{ len .Alerts }}
+              *Namespace:* {{ .GroupLabels.namespace }}
+              *Impact:* {{ .GroupLabels.impact_type }}

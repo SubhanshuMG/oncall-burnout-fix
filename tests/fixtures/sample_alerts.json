@@ -1,0 +1,106 @@
+{
+  "_comment": "Black Friday payment cascade scenario — companion fixture for tests/test_integration.py",
+  "_source": "https://github.com/SubhanshuMG/oncall-burnout-fix",
+  "version": "4",
+  "groupKey": "{}/{namespace=\"production\"}:{alertname=\"~\"}",
+  "status": "firing",
+  "receiver": "diagnosis-engine",
+  "groupLabels": { "namespace": "production", "layer": "infrastructure" },
+  "commonLabels": { "namespace": "production", "env": "production" },
+  "commonAnnotations": {},
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "DatabaseConnectionPoolExhausted",
+        "severity": "critical",
+        "layer": "infrastructure",
+        "impact_type": "resource",
+        "root_cause_candidate": "true",
+        "service": "order-service",
+        "namespace": "production",
+        "runbook": "RB-DB-001"
+      },
+      "annotations": {
+        "summary": "DB connection pool at 98% capacity",
+        "description": "order-service exhausting Postgres connections"
+      },
+      "startsAt": "2024-11-29T23:47:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus/graph",
+      "fingerprint": "fp001"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "ServiceErrorRateHigh",
+        "severity": "warning",
+        "layer": "application",
+        "impact_type": "availability",
+        "root_cause_candidate": "false",
+        "service": "payment-service",
+        "namespace": "production",
+        "runbook": "RB-APP-001"
+      },
+      "annotations": { "summary": "payment-service error rate 12%" },
+      "startsAt": "2024-11-29T23:47:30Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus/graph",
+      "fingerprint": "fp002"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "ServiceLatencyHigh",
+        "severity": "warning",
+        "layer": "application",
+        "impact_type": "performance",
+        "root_cause_candidate": "false",
+        "service": "checkout-service",
+        "namespace": "production",
+        "runbook": "RB-APP-002"
+      },
+      "annotations": { "summary": "checkout-service p99 latency 8.2s" },
+      "startsAt": "2024-11-29T23:47:45Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus/graph",
+      "fingerprint": "fp003"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "ServiceErrorRateHigh",
+        "severity": "warning",
+        "layer": "application",
+        "impact_type": "availability",
+        "root_cause_candidate": "false",
+        "service": "inventory-service",
+        "namespace": "production",
+        "runbook": "RB-APP-001"
+      },
+      "annotations": { "summary": "inventory-service error rate 7%" },
+      "startsAt": "2024-11-29T23:48:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus/graph",
+      "fingerprint": "fp004"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "KafkaConsumerLagHigh",
+        "severity": "warning",
+        "layer": "messaging",
+        "impact_type": "throughput",
+        "root_cause_candidate": "false",
+        "service": "notification-service",
+        "namespace": "production",
+        "runbook": "RB-KAFKA-001"
+      },
+      "annotations": { "summary": "Consumer lag 120,000 messages" },
+      "startsAt": "2024-11-29T23:50:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus/graph",
+      "fingerprint": "fp005"
+    }
+  ]
+}
